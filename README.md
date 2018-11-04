@@ -1,2 +1,4 @@
 # s3consistencyTest
-Test s3 consistency
+Simple application to test s3 consistency
+
+
