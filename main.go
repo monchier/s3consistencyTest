@@ -16,6 +16,7 @@ import (
 
 const (
 	myBucket = "trifacta-matteo-test"
+	maxRetries = 10000
 )
 var (
 	namespace = "MatteoS3Test"
@@ -39,31 +40,25 @@ func putMetric(sess *session.Session, metricName string, value float64, enable b
 			{ MetricName: &metricName, Value: &value },
 		},
 	})
-	if err != nil {
-		return fmt.Errorf("Error uploading metric", err)
-	}
-	return nil
+	return err;
 }
 
 func doPut(svc *s3.S3, key string, value int64) error {
 	reader := strings.NewReader(strconv.FormatInt(value, 10))
 	_, err := svc.PutObject(new(s3.PutObjectInput).SetBucket(myBucket).SetKey(key).SetBody(reader))
-	if err != nil {
-		return fmt.Errorf("PUT failed", err)
-	}
-	return nil
+	return err
 }
 
 func doGet(svc *s3.S3, key string) (int64, error) {
 	getObjectResponse, err := svc.GetObject(new(s3.GetObjectInput).SetBucket(myBucket).SetKey(key))
 	if err != nil {
-		return 0, fmt.Errorf("GET failed", err)
+		return 0, fmt.Errorf("GET failed: ", err)
 	}
 	buf := new(bytes.Buffer)
 	buf.ReadFrom(getObjectResponse.Body)
 	number, err := strconv.ParseInt(buf.String(), 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("Conversion error", err)
+		return 0, fmt.Errorf("Conversion error: ", err)
 	}
 	return number, nil
 }
@@ -74,7 +69,7 @@ func updateAndTest(sess *session.Session, counter int64, delay time.Duration, cw
 	})
 
 	if err := doPut(svc, key, counter); err != nil {
-		return fmt.Errorf("Put error", err)
+		return fmt.Errorf("Put error: ", err)
 	}
 
 	time.Sleep(delay)
@@ -87,20 +82,22 @@ func updateAndTest(sess *session.Session, counter int64, delay time.Duration, cw
 
 	nViolations := 0
 
-	for i := 0 ; number != counter && i < 1000; i++ {
+	for ; number != counter && nViolations < maxRetries; nViolations++ {
 		nViolations++;
+
 		time.Sleep(100 * time.Millisecond)
+
 		number, err = doGet(svc, key);
 
 		if err != nil {
-			return fmt.Errorf("Get error", err)
+			return err
 		}
 	}
 
 	if nViolations > 0 {
 		log.Printf("consistency violation number=%d != counter=%d, nViolations=%d\n", number, counter, nViolations)
-		if err := putMetric(sess, "consistencyViolation", 1.0, cw); err != nil {
-			return fmt.Errorf("Error in uploading metric", err)
+		if err := putMetric(sess, "consistencyViolation", float64(nViolations), cw); err != nil {
+			return fmt.Errorf("Error in uploading metric: ", err)
 		}
 	}
 
@@ -121,21 +118,21 @@ func main() {
 	conf := aws.Config{Region: aws.String("us-west-2")}
 	sess, err:= session.NewSession(&conf)
 	if err != nil {
-		log.Fatal("failed to create session ", err)
+		log.Fatal("failed to create session: ", err)
 	}
 
 	if err := putMetric(sess, "start", 1.0, *cwEnabled); err != nil {
-		log.Fatal(fmt.Errorf("Error in uploading metric", err))
+		log.Fatal(fmt.Errorf("Error in uploading metric: ", err))
 	}
 
 	for i := int64(0); *iterations == -1 || i < *iterations; i++ {
 		err := updateAndTest(sess, i, time.Duration(*delay * 1e6), *cwEnabled, *key)
 		if err != nil {
-			log.Fatal("done with error", err)
+			log.Fatal("updateAndTest is done with error: ", err)
 		}
 	}
 
 	if err := putMetric(sess, "end", 1.0, *cwEnabled); err != nil {
-		log.Fatal(fmt.Errorf("Error in uploading metric", err))
+		log.Fatal(fmt.Errorf("Error in uploading metric: ", err))
 	}
 }
