@@ -18,6 +18,7 @@ const (
 	myBucket = "trifacta-matteo-test"
 	maxRetries = 10000
 )
+
 var (
 	namespace = "MatteoS3Test"
 )
